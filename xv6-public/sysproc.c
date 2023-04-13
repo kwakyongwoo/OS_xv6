@@ -89,3 +89,33 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+void
+sys_yield(void)
+{
+
+}
+
+int
+sys_getLevel(void)
+{
+  return 1;
+}
+
+void
+sys_setPriority(int pid, int priority)
+{
+
+}
+
+void
+sys_schedulerLock(int password)
+{
+
+}
+
+void
+sys_schedulerUnlock(int password)
+{
+  
+}

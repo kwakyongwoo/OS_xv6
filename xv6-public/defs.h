@@ -188,3 +188,10 @@ void            clearpteu(pde_t *pgdir, char *uva);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
+
+// For MLFQ
+void yield(void);
+int getLevel(void);
+void setPriority(int pid, int priority);
+void schedulerLock(int password);
+void schedulerUnlock(int password);
