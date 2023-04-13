@@ -12,6 +12,8 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
+int globalTicks = 0;
+
 static struct proc *initproc;
 
 int nextpid = 1;
@@ -111,6 +113,12 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
+
+  // init
+  p->level = 0;
+  p->priority = 3;
+  p->timeQuantum = 0;
+  p->sequence = 0;
 
   return p;
 }
@@ -330,26 +338,89 @@ scheduler(void)
     // Enable interrupts on this processor.
     sti();
 
+    // Priority boosting
+    if (globalTicks >= 100) {
+      for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+        if (p->state != RUNNABLE)
+          continue;
+        
+        globalTicks = 0;
+
+        p->level = 0;
+        p->priority = 3;
+        p->timeQuantum = 0;
+        p->sequence = globalTicks;
+      }
+    }
+
+    struct proc *selectProc = 0;
+    int levelHigh = 3;
+
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
 
+      if (p->level < levelHigh) {
+        selectProc = p;
+        levelHigh = selectProc->level;
+      }
+
+      else if (p->level == levelHigh) {
+        // 큐의 level이 0, 1 일때(priority 고려하지않고 들어온 순서만 고려)
+        if (levelHigh == 0 || levelHigh == 1) {
+          if (p->sequence < selectProc->sequence)
+            selectProc = p;
+          else if (p->sequence == selectProc->sequence && p->pid < selectProc->pid)
+            selectProc = p;
+        }
+        // 큐의 level이 2 일때(priority 고려 -> 들어온 순서 고려)
+        else if (levelHigh == 2) {
+          if (p->priority < selectProc->priority)
+            selectProc = p;
+          else if (p->priority == selectProc->priority) {
+            if (p->sequence < selectProc->sequence)
+              selectProc = p;
+            else if (p->sequence == selectProc->sequence && p->pid < selectProc->pid)
+              selectProc = p;
+          }
+        }
+        else {
+          cprintf("ERROR: There is no Level %d\n", p->level);
+        }
+      }
+    }
+
+    if (levelHigh != 3) {
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+      c->proc = selectProc;
+      switchuvm(selectProc);
+      selectProc->state = RUNNING;
 
-      swtch(&(c->scheduler), p->context);
+      swtch(&(c->scheduler), selectProc->context);
       switchkvm();
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
+
+      globalTicks++;
+      selectProc->timeQuantum++;
+      selectProc->sequence = globalTicks;
+
+      if (selectProc->timeQuantum >= (selectProc->level)*2 + 4) {
+        selectProc->timeQuantum = 0;
+        if (selectProc->level == 0 || selectProc->level == 1)
+          selectProc->level++;
+        else if (selectProc->level == 2)
+          if (selectProc->priority > 0)
+            selectProc->priority--;
+      }
     }
+
     release(&ptable.lock);
 
   }
