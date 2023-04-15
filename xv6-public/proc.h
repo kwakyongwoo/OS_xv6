@@ -54,6 +54,7 @@ struct proc {
   int priority;
   uint timeQuantum;
   int sequence;
+  int sLock;
 };
 
 // Process memory is laid out contiguously, low addresses first:

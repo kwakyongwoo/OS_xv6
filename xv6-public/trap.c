@@ -22,6 +22,8 @@ tvinit(void)
   for(i = 0; i < 256; i++)
     SETGATE(idt[i], 0, SEG_KCODE<<3, vectors[i], 0);
   SETGATE(idt[T_SYSCALL], 1, SEG_KCODE<<3, vectors[T_SYSCALL], DPL_USER);
+  SETGATE(idt[129], 1, SEG_KCODE<<3, vectors[129], DPL_USER);
+  SETGATE(idt[130], 1, SEG_KCODE<<3, vectors[130], DPL_USER);
 
   initlock(&tickslock, "time");
 }
@@ -45,6 +47,12 @@ trap(struct trapframe *tf)
       exit();
     return;
   }
+
+  // if (tf->trapno == 129) {
+  //   cprintf("129 call\n");
+    
+  //   return;
+  // }
 
   switch(tf->trapno){
   case T_IRQ0 + IRQ_TIMER:
@@ -76,6 +84,14 @@ trap(struct trapframe *tf)
     cprintf("cpu%d: spurious interrupt at %x:%x\n",
             cpuid(), tf->cs, tf->eip);
     lapiceoi();
+    break;
+  case 129:
+    cprintf("129 call\n");
+    schedulerLock(2018007874);
+    break;
+  case 130:
+    cprintf("130 call\n");
+    schedulerUnlock(2018007874);
     break;
 
   //PAGEBREAK: 13

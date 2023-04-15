@@ -93,29 +93,38 @@ sys_uptime(void)
 void
 sys_yield(void)
 {
-
+  yield();
 }
 
 int
 sys_getLevel(void)
 {
-  return 1;
+  return getLevel();
 }
 
 void
-sys_setPriority(int pid, int priority)
+sys_setPriority(void)
 {
+  int pid, priority;
 
+  if (argint(0, &pid) == 0 && argint(1, &priority))
+    setPriority(pid, priority);
 }
 
 void
-sys_schedulerLock(int password)
+sys_schedulerLock(void)
 {
+  int password;
 
+  if (argint(0, &password) == 0)
+    schedulerLock(password);
 }
 
 void
-sys_schedulerUnlock(int password)
+sys_schedulerUnlock(void)
 {
-  
+  int password;
+
+  if (argint(0, &password) == 0)
+    schedulerUnlock(password);
 }

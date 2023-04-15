@@ -118,7 +118,8 @@ found:
   p->level = 0;
   p->priority = 3;
   p->timeQuantum = 0;
-  p->sequence = 0;
+  p->sequence = globalTicks;
+  p->sLock = 0;
 
   return p;
 }
@@ -223,6 +224,11 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  np->level = 0;
+  np->priority = 3;
+  np->timeQuantum = 0;
+  np->sequence = globalTicks;
+  np->sLock = 0;
 
   release(&ptable.lock);
 
@@ -319,6 +325,29 @@ wait(void)
   }
 }
 
+void
+priorityBoosting(void)
+{
+  struct proc *p;
+
+  acquire(&ptable.lock);
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->state != RUNNABLE)
+      continue;
+
+    globalTicks = 0;
+
+    p->level = 0;
+    p->priority = 3;
+    p->timeQuantum = 0;
+    p->sequence = 0;
+    p->sLock = 0;
+  }
+
+  release(&ptable.lock);
+}
+
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -338,27 +367,45 @@ scheduler(void)
     // Enable interrupts on this processor.
     sti();
 
-    // Priority boosting
-    if (globalTicks >= 100) {
-      for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-        if (p->state != RUNNABLE)
-          continue;
-        
-        globalTicks = 0;
+    // global ticks 100 일 때, priority boost
+    if (globalTicks >= 100)
+      priorityBoosting();
 
-        p->level = 0;
-        p->priority = 3;
-        p->timeQuantum = 0;
-        p->sequence = globalTicks;
-      }
-    }
+    acquire(&ptable.lock);
 
     struct proc *selectProc = 0;
+
+    // schedulerLock 호출한 프로세스 있는지 확인
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if (p->state == RUNNABLE && p->sLock == 1) {
+        selectProc = p;
+        break;
+      }
+    }
+    
+    // schedulerLock
+    if (selectProc != 0) {
+      // cprintf("PID: %d, level: %d, Priority: %d   sequence: %d mono: %d\n", selectProc->pid, selectProc->level, selectProc->priority, selectProc->sequence, selectProc->sLock);
+      c->proc = selectProc;
+      switchuvm(selectProc);
+      selectProc->state = RUNNING;
+      swtch(&(c->scheduler), selectProc->context);
+      switchkvm();
+      
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+
+      release(&ptable.lock);
+
+      // 독점으로 사용하기 때문에 globalTicks 만 증가
+      globalTicks++;
+      continue;
+    }
+
     int levelHigh = 3;
 
-    // Loop over process table looking for process to run.
-    acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
       if(p->state != RUNNABLE)
         continue;
 
@@ -396,6 +443,7 @@ scheduler(void)
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
+      // cprintf("PID: %d, level: %d, Priority: %d   sequence: %d mono: %d\n", selectProc->pid, selectProc->level, selectProc->priority, selectProc->sequence, selectProc->sLock);
       c->proc = selectProc;
       switchuvm(selectProc);
       selectProc->state = RUNNING;
@@ -409,7 +457,9 @@ scheduler(void)
 
       globalTicks++;
       selectProc->timeQuantum++;
-      selectProc->sequence = globalTicks;
+      
+      if (selectProc->level == 0 || selectProc->level == 1)
+        selectProc->sequence = globalTicks;
 
       if (selectProc->timeQuantum >= (selectProc->level)*2 + 4) {
         selectProc->timeQuantum = 0;
@@ -602,4 +652,99 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+int
+getLevel(void)
+{
+  struct proc *p = myproc();
+
+  if (p) {
+    return p->level;
+  }
+  else {
+    cprintf("ERROR: myproc() is NULL\n");
+    return -1;
+  }
+}
+
+void
+setPriority(int pid, int priority)
+{
+  struct proc *p;
+
+  if (priority < 0 || priority > 3) {
+    cprintf("setPriority(): priority must be betweeen 0 and 3.\n");
+    return;
+  }
+
+  acquire(&ptable.lock);
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->pid == pid) {
+      p->priority = priority;
+      release(&ptable.lock);
+      return;
+    }
+  }
+
+  release(&ptable.lock);
+
+  cprintf("setPriority(): No satisfied PID value found\n");
+}
+
+void
+schedulerLock(int password)
+{
+  struct proc *p = myproc();
+
+  if (!p) {
+    cprintf("ERROR: myproc() is NULL\n");
+    return;
+  }
+
+  if (password != 2018007874) {
+    cprintf("schedulerLock Password Wrong!\npid: %d, time quantum: %d, level: %d\n", p->pid, p->timeQuantum, p->level);
+    kill(p->pid);
+    return;
+  }
+  
+  acquire(&ptable.lock);
+
+  globalTicks = 0;
+  p->sLock = 1;
+
+  release(&ptable.lock);
+}
+
+void
+schedulerUnlock(int password)
+{
+  struct proc *p = myproc();
+
+  if (!p) {
+    cprintf("ERROR: myproc() is NULL\n");
+    return;
+  }
+
+  if (password != 2018007874) {
+    cprintf("schedulerLock Password Wrong!\npid: %d, time quantum: %d, level: %d\n", p->pid, p->timeQuantum, p->level);
+    kill(p->pid);
+    return;
+  }
+
+  if (p->sLock == 0) {
+    cprintf("Process did not call scheduelrLoc()\n");
+    return;
+  }
+
+  acquire(&ptable.lock);
+
+  p->level = 0;
+  p->priority = 3;
+  p->sequence = -1;
+  p->timeQuantum = 0;
+  p->sLock = 0;
+
+  release(&ptable.lock);
 }
