@@ -673,13 +673,6 @@ schedulerLock(int password)
     return;
   }
 
-  for (struct proc *check = ptable.proc; check < &ptable.proc[NPROC]; check++) {
-    if (check->sLock == 1) {
-      cprintf("ERROR: Another process is already calling schedulerLock().\n");
-      return;
-    }
-  }
-
   if (password != 2018007874) {
     cprintf("schedulerLock Password Wrong!\npid: %d, time quantum: %d, level: %d\n", p->pid, p->timeQuantum, p->level);
     kill(p->pid);
