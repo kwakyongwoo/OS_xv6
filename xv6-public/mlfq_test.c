@@ -43,8 +43,8 @@ int main(int argc, char *argv[])
   {
     for (i = 0; i < NUM_LOOP; i++) {
       if(i == 10000) {
-        // schedulerLock(2018007875);
-        // __asm__("int $129");
+        // schedulerLock(2018007874);
+        __asm__("int $129");
         // sleep(10);
         // __asm__("int $130");
       }

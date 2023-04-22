@@ -50,11 +50,11 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
   // For MLFQ
-  int level;
-  int priority;
-  uint timeQuantum;
-  int sequence;
-  int sLock;
+  int level;                   // 현재 큐 레벨을 나타낸다.
+  int priority;                // 우선순위
+  uint timeQuantum;            // 소비한 시간
+  int sequence;                // 실행 순서
+  int sLock;                   // schedulerLock 여부
 };
 
 extern uint globalTicks;

@@ -91,7 +91,7 @@ trap(struct trapframe *tf)
     schedulerLock(2018007874);
     break;
   case 130:
-    cprintf("130 call\n");
+    // cprintf("130 call\n");
     schedulerUnlock(2018007874);
     break;
 

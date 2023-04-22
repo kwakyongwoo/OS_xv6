@@ -382,18 +382,28 @@ scheduler(void)
       if(p->state != RUNNABLE)
         continue;
 
+      // schedulerLock이 호출된 프로세스가 있으면 우선적으로 선택한다.
+      if (p->sLock == 1) {
+        sp = p;
+        break;
+      }
+
+			// sp가 비어있거나 현재 확인하는 프로세스의 level이 선택한 프로세스 level 보다 작은 경우 선택한다.
       if (sp == 0 || p->level < sp->level) {
         sp = p;
         continue;
       }
 
+			// level이 같을 때, level의 조건에 맞게 sp를 선택한다.
       if (p->level == sp->level) {
+				// L0, L1 일 때, sequence 값을 비교한다.
         if (p->level == 0 || p->level == 1) {
           if (p->sequence < sp->sequence)
             sp = p;
           else if (p->sequence == sp->sequence && p->pid < sp->pid)
             sp = p;
         }
+				// L2 일 때, priority 비교 후, 같으면 sequence를 비교한다.
         else if (p->level == 2) {
           if (p->priority < sp->priority)
             sp = p;
@@ -404,17 +414,19 @@ scheduler(void)
               sp = p;
           }
         }
+				// level이 0~3 범위에 있지 않다면 오류문을 띄운다.
         else {
           cprintf("ERROR PID: %d, There is no Level %d\n", p->pid, p->level);
         }
       }
     }
 
+    // 선택된 sp가 있을 경우 sp를 context switching 해준다.
     if (sp != 0) {
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      // cprintf("PID: %d, level: %d, Priority: %d   sequence: %d mono: %d   gt: %d\n", sp->pid, sp->level, sp->priority, sp->sequence, sp->sLock, globalTicks);
+      cprintf("PID: %d, level: %d, Priority: %d   sequence: %d mono: %d   gt: %d\n", sp->pid, sp->level, sp->priority, sp->sequence, sp->sLock, globalTicks);
       c->proc = sp;
       switchuvm(sp);
       sp->state = RUNNING;
@@ -426,11 +438,14 @@ scheduler(void)
       // It should have changed its p->state before coming back.
       c->proc = 0;
 
+      // sp 실행 종료 후 timeQuantum을 증가 시켜준다.
       sp->timeQuantum++;
       
+      // L0, L1 일 때, sequence 값 변경
       if (sp->level == 0 || sp->level == 1)
         sp->sequence = globalTicks;
 
+      // 프로세스가 현재 레벨에서 사용할 수 있는 tick을 모두 사용한 경우 조정해준다.
       if (sp->timeQuantum >= (sp->level)*2 + 4) {
         sp->timeQuantum = 0;
         if (sp->level == 0 || sp->level == 1)
