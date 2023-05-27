@@ -6,16 +6,16 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "elf.h"
 
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
 } ptable;
 
-uint globalTicks = 0;
-
 static struct proc *initproc;
 
+int nexttid = 1;
 int nextpid = 1;
 extern void forkret(void);
 extern void trapret(void);
@@ -90,6 +90,10 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+	p->tid = 0;
+	p->mainp = p;
+	p->start = 0;
+	p->end = 0;
 
   release(&ptable.lock);
 
@@ -113,13 +117,12 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
+	
+	//cprintf("allocproc\n");
+	//cprintf("edi : %d, esi : %d, ebx : %d, ebp : %d, eip : %d\n", p->context->edi
+	//						,p->context->esi, p->context->ebx, p->context->ebp, p->context->eip);
 
-  // MLFQ를 위한 변수 초기화
-  p->level = 0;
-  p->priority = 3;
-  p->timeQuantum = 0;
-  p->sequence = globalTicks;
-  p->sLock = 0;
+
 
   return p;
 }
@@ -145,6 +148,7 @@ userinit(void)
   p->tf->es = p->tf->ds;
   p->tf->ss = p->tf->ds;
   p->tf->eflags = FL_IF;
+
   p->tf->esp = PGSIZE;
   p->tf->eip = 0;  // beginning of initcode.S
 
@@ -169,6 +173,7 @@ growproc(int n)
 {
   uint sz;
   struct proc *curproc = myproc();
+	struct proc *p;
 
   sz = curproc->sz;
   if(n > 0){
@@ -178,6 +183,20 @@ growproc(int n)
     if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0)
       return -1;
   }
+
+	acquire(&ptable.lock);
+	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+		if(p->pid == 0)
+			continue;
+		if(p->pid == curproc->pid)
+			p->sz = sz;
+	}
+
+	release(&ptable.lock);
+
+
+
+
   curproc->sz = sz;
   switchuvm(curproc);
   return 0;
@@ -192,6 +211,7 @@ fork(void)
   int i, pid;
   struct proc *np;
   struct proc *curproc = myproc();
+	struct proc *p;
 
   // Allocate process.
   if((np = allocproc()) == 0){
@@ -205,6 +225,19 @@ fork(void)
     np->state = UNUSED;
     return -1;
   }
+	//if(curproc->tid != 0) {
+		//cprintf("thread making\n");
+		acquire(&ptable.lock);
+		for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+			if(curproc->pid == p->pid && curproc->tid != p->tid) {
+				deallocuvm(np->pgdir, p->address + 2*PGSIZE, p->address);
+				np->empty[np->end] = p->address;
+				np->end = (np->end+1) % (NPROC + 1);
+			}
+		}
+		release(&ptable.lock);
+	//}
+	np->address = curproc->address;
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
@@ -225,13 +258,6 @@ fork(void)
 
   np->state = RUNNABLE;
 
-  // MLFQ를 위한 변수 초기화
-  np->level = 0;
-  np->priority = 3;
-  np->timeQuantum = 0;
-  np->sequence = globalTicks;
-  np->sLock = 0;
-
   release(&ptable.lock);
 
   return pid;
@@ -245,11 +271,29 @@ exit(void)
 {
   struct proc *curproc = myproc();
   struct proc *p;
+	//struct proc *mainp = curproc->mainp;
   int fd;
-
   if(curproc == initproc)
     panic("init exiting");
-
+	
+	acquire(&ptable.lock);
+	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+		//cprintf("pid : %d\n", p->pid);
+		//cprintf("tid : %d\n", p->tid);
+		if(p->pid == curproc->pid && p != curproc) {
+			//cprintf("clean...\n");
+			kfree(p->kstack);
+			p->kstack = 0;
+			p->pid = 0;
+			p->parent = 0;
+			p->name[0] = 0;
+			p->killed = 0;
+			p->state = UNUSED;
+		}
+	}
+	release(&ptable.lock);
+	
+	//cprintf("in exit2\n");
   // Close all open files.
   for(fd = 0; fd < NOFILE; fd++){
     if(curproc->ofile[fd]){
@@ -257,7 +301,7 @@ exit(void)
       curproc->ofile[fd] = 0;
     }
   }
-
+	//cprintf("in exit3\n");
   begin_op();
   iput(curproc->cwd);
   end_op();
@@ -276,7 +320,7 @@ exit(void)
         wakeup1(initproc);
     }
   }
-
+	//cprintf("in exit5\n");
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
   sched();
@@ -327,30 +371,6 @@ wait(void)
   }
 }
 
-void
-priorityBoosting(void)
-{
-  struct proc *p;
-  globalTicks = 0;
-
-  // cprintf("Priority Boosting\n");
-
-  acquire(&ptable.lock);
-
-  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-    if (p->state != RUNNABLE)
-      continue;
-
-    p->level = 0;
-    p->priority = 3;
-    p->timeQuantum = 0;
-    p->sequence = 0;
-    p->sLock = 0;
-  }
-
-  release(&ptable.lock);
-}
-
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -370,77 +390,38 @@ scheduler(void)
     // Enable interrupts on this processor.
     sti();
 
-    // global ticks 100 일 때, priority boost
-    if (globalTicks >= 100)
-      priorityBoosting();
-
+    // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-
-    struct proc *sp = 0;  // selectProc 현재 실행해야할 프로세스 선정
-
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
 
-      if (sp == 0 || p->level < sp->level) {
-        sp = p;
-        continue;
-      }
-
-      if (p->level == sp->level) {
-        if (p->level == 0 || p->level == 1) {
-          if (p->sequence < sp->sequence)
-            sp = p;
-          else if (p->sequence == sp->sequence && p->pid < sp->pid)
-            sp = p;
-        }
-        else if (p->level == 2) {
-          if (p->priority < sp->priority)
-            sp = p;
-          else if (p->priority == sp->priority) {
-            if (p->sequence < sp->sequence)
-              sp = p;
-            else if (p->sequence == sp->sequence && p->pid < sp->pid)
-              sp = p;
-          }
-        }
-        else {
-          cprintf("ERROR PID: %d, There is no Level %d\n", p->pid, p->level);
-        }
-      }
-    }
-
-    if (sp != 0) {
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      // cprintf("PID: %d, level: %d, Priority: %d   sequence: %d mono: %d   gt: %d\n", sp->pid, sp->level, sp->priority, sp->sequence, sp->sLock, globalTicks);
-      c->proc = sp;
-      switchuvm(sp);
-      sp->state = RUNNING;
+      c->proc = p;
+			///*
+      //cprintf("scheduling process\n");
+			//cprintf("pid : %d, tid : %d, address : %d\n", p->pid, p->tid, p->address);
+			//*/
 
-      swtch(&(c->scheduler), sp->context);
-      switchkvm();
+			switchuvm(p);
+      p->state = RUNNING;
+			//cprintf("before switch\n");
+			//cprintf("edi : %d, esi : %d, ebx : %d, ebp : %d, eip : %d\n", p->context->edi
+			//				,p->context->esi, p->context->ebx, p->context->ebp, p->context->eip);
 
+			//cprintf("esp : %d, eip : %d\n", p->tf->esp, p->tf->eip);
+
+
+      swtch(&(c->scheduler), p->context);
+      //cprintf("after switch\n");
+			switchkvm();
+			
       // Process is done running for now.
       // It should have changed its p->state before coming back.
       c->proc = 0;
-
-      sp->timeQuantum++;
-      
-      if (sp->level == 0 || sp->level == 1)
-        sp->sequence = globalTicks;
-
-      if (sp->timeQuantum >= (sp->level)*2 + 4) {
-        sp->timeQuantum = 0;
-        if (sp->level == 0 || sp->level == 1)
-          sp->level++;
-        else if (sp->level == 2)
-          if (sp->priority > 0)
-            sp->priority--;
-      }
     }
-
     release(&ptable.lock);
 
   }
@@ -487,7 +468,9 @@ yield(void)
 void
 forkret(void)
 {
-  static int first = 1;
+	// cprintf("forkret\n");
+
+	static int first = 1;
   // Still holding ptable.lock from scheduler.
   release(&ptable.lock);
 
@@ -625,96 +608,474 @@ procdump(void)
 }
 
 int
-getLevel(void)
-{
-  struct proc *p = myproc();
+thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
+{ 
+	/*
+	struct proc *p;
+		
+	acquire(&ptable.lock);
 
-  if (p) {
-    return p->level;
-  }
-  else {
-    cprintf("ERROR: myproc() is NULL\n");
-    return -1;
-  }
+	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+		cprintf("pid : %d, state : %d, tid : %d, address : %d\n", p->pid, p->state, p->tid, p->address);
+	}
+
+	release(&ptable.lock);
+	*/
+	
+	int i;
+	uint sz, sp, ustack[2];
+	pde_t *pgdir;
+	struct proc *np;
+	struct proc *curproc = myproc();
+
+	//cprintf("create\n");
+
+	if(curproc->mainp != curproc) {
+		return -1;
+	}
+
+	//////////////////////////////
+	//
+	// fork part
+	//
+	if((np = allocproc()) == 0) {
+		return -1;
+	}
+
+	pgdir = curproc->pgdir;
+
+	if(pgdir == 0) {
+		np->state = UNUSED;
+		return -1;
+	}
+
+	np->parent = curproc->parent;
+	*np->tf = *curproc->tf;
+
+	for(i = 0; i < NOFILE; i++) {
+		if(curproc->ofile[i])
+			np->ofile[i] = filedup(curproc->ofile[i]);
+	}
+	np->cwd = idup(curproc->cwd);
+
+	safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+
+	acquire(&ptable.lock);
+
+	np->tf->eax = 0;
+
+	np->pid = curproc->pid;
+
+	np->mainp = curproc;
+	
+	np->tid = nexttid++;
+
+	release(&ptable.lock);
+	//
+	//////////////////////////////
+
+	//////////////////////////////
+	//
+	// exec part
+	//
+	if(curproc->start == curproc->end) {
+		sz = curproc->sz;	
+	} else {
+		sz = curproc->empty[curproc->start];
+	}
+	//cprintf("alloc : %d\n", sz);
+	//deallocuvm(pgdir, sz * 2*PGSIZE, sz);
+	if((sz = allocuvm(pgdir, sz, sz + 2*PGSIZE)) == 0) {
+		goto bad;
+	}
+	//cprintf("error\n");
+	clearpteu(pgdir, (char*)(sz - 2*PGSIZE));
+	///*
+	sp = sz;
+
+	ustack[0] = 0xffffffff;
+	sp -= 4;
+	ustack[1] = (uint)arg;
+	sp -= 4;
+	if(copyout(pgdir, sp, ustack, 2*4) < 0)
+		goto bad;
+	//*/
+	np->address = sz - 2*PGSIZE;
+	if(curproc->start == curproc->end) {
+		curproc->sz = sz;
+	} else {
+		curproc->sz = curproc->sz;
+		curproc->start = (curproc->start+1) % (NPROC+1);
+	}
+	np->sz = curproc->sz;
+	np->pgdir = pgdir;
+	np->tf->eip = (uint)start_routine;
+	np->tf->esp = sp;
+
+	//switchuvm(np);
+	//cprintf("eip : %d\n", np->tf->eip);
+	
+	//
+	//////////////////////////////
+
+	*thread = np->tid;
+
+	acquire(&ptable.lock);
+
+	np->state = RUNNABLE;
+
+	release(&ptable.lock);
+
+	return 0;
+
+bad :
+	np->state = UNUSED;
+	return -1;
 }
 
 void
-setPriority(int pid, int priority)
+thread_exit(void *retval)
+{
+	struct proc *curproc = myproc();
+	int fd;
+
+	if(curproc->tid == 0) {
+		return;
+	}
+
+	curproc->retval = retval;
+
+	//cprintf("exit\n");
+
+	//////////////////////////////
+	//
+	// exit part
+	//
+	for(fd = 0; fd < NOFILE; fd++) {
+		if(curproc->ofile[fd]) {
+			fileclose(curproc->ofile[fd]);
+			curproc->ofile[fd] = 0;
+		}
+	}
+	
+	begin_op();
+	iput(curproc->cwd);
+	end_op();
+	curproc->cwd = 0;
+
+	acquire(&ptable.lock);
+
+	wakeup1(curproc->mainp);
+
+	curproc->state = ZOMBIE;
+	
+	sched();
+	panic("zombie exit");
+	//
+	//////////////////////////////
+}
+
+int
+thread_join(thread_t thread, void **retval)
+{
+	struct proc *curproc = myproc();
+	struct proc *p;
+	int address;
+	int havekids;
+
+	//*retval = curproc->retval;
+
+	//cprintf("join\n");
+
+	if(curproc->tid != 0) {
+		return -1;
+	}
+
+	acquire(&ptable.lock);
+	for(;;){
+		havekids = 0;
+		for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+			if(p->mainp != curproc || p->tid != thread)
+				continue;
+			//cprintf("have kids\n");
+			havekids = 1;
+			if(p->state == ZOMBIE){
+				//cprintf("zombie\n");
+				kfree(p->kstack);
+				p->kstack = 0;
+				p->pid = 0;
+				p->parent = 0;
+				p->name[0] = 0;
+				p->killed = 0;
+				p->state = UNUSED;
+
+				p->mainp = 0;
+				p->tid = 0;
+				address = p->address;
+				p->address = 0;
+
+				//cprintf("address : %d\n", address);
+				deallocuvm(p->pgdir, address + 2*PGSIZE, address);
+
+				*retval = p->retval;
+
+				release(&ptable.lock);
+
+				curproc->empty[curproc->end] = address;
+				curproc->end = (curproc->end+1) % (NPROC+1);				
+
+				return 0;
+			}
+		}
+
+		if(!havekids || curproc->killed) {
+			cprintf("error\n");
+			release(&ptable.lock);
+			return -1;
+		}
+		//cprintf("sleep\n");
+		sleep(curproc, &ptable.lock);
+	}
+}
+
+void
+print_table(void)
+{
+	int i;
+	struct proc *p;
+	acquire(&ptable.lock);
+	for(i = 0, p = ptable.proc; p < &ptable.proc[NPROC]; p++, i++) {
+		if(p->state == UNUSED) continue;
+		cprintf("%d. pid : %d, tid : %d, parent pid : %d, mainp pid : %d, state : %d\n",
+						i, p->pid, p->tid, p->parent->pid, p->mainp->pid, p->state);
+	}
+	release(&ptable.lock);
+}
+
+int
+thread_exit_exec(int pid, int tid) {
+	struct proc *p;
+		
+	acquire(&ptable.lock);
+	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+		if(pid == 0)
+			continue;
+		if(p->pid == pid && p->tid != tid) {
+			kfree(p->kstack);
+			p->kstack = 0;
+			p->pid = 0;
+			p->parent = 0;
+			p->name[0] = 0;
+			p->killed = 0;
+			p->state = UNUSED;
+		}
+	}
+	release(&ptable.lock);
+
+  return 0;
+}
+
+
+
+
+
+int
+intlen(int x) 
+{
+    if (x >= 1000000000) return 10;
+    if (x >= 100000000)  return 9;
+    if (x >= 10000000)   return 8;
+    if (x >= 1000000)    return 7;
+    if (x >= 100000)     return 6;
+    if (x >= 10000)      return 5;
+    if (x >= 1000)       return 4;
+    if (x >= 100)        return 3;
+    if (x >= 10)         return 2;
+    return 1;
+}
+
+int 
+plist(void) 
 {
   struct proc *p;
-
-  if (priority < 0 || priority > 3) {
-    cprintf("setPriority(): priority must be betweeen 0 and 3.\n");
-    return;
-  }
+  cprintf("Process Name     | PID        | Stack Size | Size       | Memory Limit\n");
 
   acquire(&ptable.lock);
 
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-    if (p->pid == pid) {
-      p->priority = priority;
-      release(&ptable.lock);
-      return;
+    if (p->state != RUNNABLE && p->state != RUNNING)
+      continue;
+
+    int blank = 19 - strlen(p->name);
+    cprintf("%s", p->name); 
+    for ( ; blank > 0; blank--) {
+      cprintf(" ");
     }
+    
+    blank = 13 - intlen(p->pid);
+    cprintf("%d", p->pid);
+    for ( ; blank > 0; blank--) {
+      cprintf(" ");
+    }
+
+    blank = 13 - intlen(p->stacksize);
+    cprintf("%d", p->stacksize);
+    for ( ; blank > 0; blank--) {
+      cprintf(" ");
+    }
+
+    blank = 13 - intlen(p->sz);
+    cprintf("%d", p->sz);
+    for ( ; blank > 0; blank--) {
+      cprintf(" ");
+    }
+
+    cprintf("%d", p->limit);
+    
+    cprintf("\n");
   }
 
   release(&ptable.lock);
 
-  cprintf("setPriority(): No satisfied PID value found\n");
+  return 0;
 }
 
-void
-schedulerLock(int password)
+int
+exec2(char *path, char **argv, int stacksize)
 {
-  struct proc *p = myproc();
+  char *s, *last;
+  int i, off;
+  uint argc, sz, sp, ustack[3+MAXARG+1];
+  struct elfhdr elf;
+  struct inode *ip;
+  struct proghdr ph;
+  pde_t *pgdir, *oldpgdir;
+  struct proc *curproc = myproc();
 
-  if (!p) {
-    cprintf("ERROR: myproc() is NULL\n");
-    return;
-  }
-
-  if (password != 2018007874) {
-    cprintf("schedulerLock Password Wrong!\npid: %d, time quantum: %d, level: %d\n", p->pid, p->timeQuantum, p->level);
-    kill(p->pid);
-    return;
-  }
-  
   acquire(&ptable.lock);
-
-  globalTicks = 0;
-  p->sLock = 1;
-
+  curproc->stacksize = stacksize;
   release(&ptable.lock);
+
+  begin_op();
+
+  if((ip = namei(path)) == 0){
+    end_op();
+    cprintf("exec: fail\n");
+    return -1;
+  }
+  ilock(ip);
+  pgdir = 0;
+
+  // Check ELF header
+  if(readi(ip, (char*)&elf, 0, sizeof(elf)) != sizeof(elf))
+    goto bad;
+  if(elf.magic != ELF_MAGIC)
+    goto bad;
+
+  if((pgdir = setupkvm()) == 0)
+    goto bad;
+
+  // Load program into memory.
+  sz = 0;
+  for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
+    if(readi(ip, (char*)&ph, off, sizeof(ph)) != sizeof(ph))
+      goto bad;
+    if(ph.type != ELF_PROG_LOAD)
+      continue;
+    if(ph.memsz < ph.filesz)
+      goto bad;
+    if(ph.vaddr + ph.memsz < ph.vaddr)
+      goto bad;
+    if((sz = allocuvm(pgdir, sz, ph.vaddr + ph.memsz)) == 0)
+      goto bad;
+    if(ph.vaddr % PGSIZE != 0)
+      goto bad;
+    if(loaduvm(pgdir, (char*)ph.vaddr, ip, ph.off, ph.filesz) < 0)
+      goto bad;
+  }
+  iunlockput(ip);
+  end_op();
+  ip = 0;
+
+  // Allocate two pages at the next page boundary.
+  // Make the first inaccessible.  Use the second as the user stack.
+  sz = PGROUNDUP(sz);
+  if((sz = allocuvm(pgdir, sz, sz + (stacksize + 1)*PGSIZE)) == 0)
+    goto bad;
+  clearpteu(pgdir, (char*)(sz - (stacksize + 1)*PGSIZE));
+  sp = sz;
+
+  // Push argument strings, prepare rest of stack in ustack.
+  for(argc = 0; argv[argc]; argc++) {
+    if(argc >= MAXARG)
+      goto bad;
+    sp = (sp - (strlen(argv[argc]) + 1)) & ~3;
+    if(copyout(pgdir, sp, argv[argc], strlen(argv[argc]) + 1) < 0)
+      goto bad;
+    ustack[3+argc] = sp;
+  }
+  ustack[3+argc] = 0;
+
+  ustack[0] = 0xffffffff;  // fake return PC
+  ustack[1] = argc;
+  ustack[2] = sp - (argc+1)*4;  // argv pointer
+
+  sp -= (3+argc+1) * 4;
+  if(copyout(pgdir, sp, ustack, (3+argc+1)*4) < 0)
+    goto bad;
+
+  // Save program name for debugging.
+  for(last=s=path; *s; s++)
+    if(*s == '/')
+      last = s+1;
+  safestrcpy(curproc->name, last, sizeof(curproc->name));
+
+  // Commit to the user image.
+  oldpgdir = curproc->pgdir;
+  curproc->pgdir = pgdir;
+  curproc->sz = sz;
+  curproc->tf->eip = elf.entry;  // main
+  curproc->tf->esp = sp;
+  switchuvm(curproc);
+  freevm(oldpgdir);
+  return 0;
+
+ bad:
+  if(pgdir)
+    freevm(pgdir);
+  if(ip){
+    iunlockput(ip);
+    end_op();
+  }
+  return -1;
 }
 
-void
-schedulerUnlock(int password)
+int
+setmemorylimit(int pid, int limit)
 {
-  struct proc *p = myproc();
-
-  if (!p) {
-    cprintf("ERROR: myproc() is NULL\n");
-    return;
-  }
-
-  if (password != 2018007874) {
-    cprintf("schedulerLock Password Wrong!\npid: %d, time quantum: %d, level: %d\n", p->pid, p->timeQuantum, p->level);
-    kill(p->pid);
-    return;
-  }
-
-  if (p->sLock == 0) {
-    cprintf("Process did not call scheduelrLoc()\n");
-    return;
-  }
+  struct proc *p;
 
   acquire(&ptable.lock);
 
-  p->level = 0;
-  p->priority = 3;
-  p->sequence = -1;
-  p->timeQuantum = 0;
-  p->sLock = 0;
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->pid == pid) break;
+  }
+
+  if (p->pid != pid) {
+    release(&ptable.lock);
+    // pid 존재하지 않음
+    return -1;
+  }
+
+  if (p->sz >= limit) {
+    release(&ptable.lock);
+    // limit이 현재 size보다 작음
+    return -1;
+  }
+
+  p->limit = limit;
 
   release(&ptable.lock);
+
+  return 0;
 }

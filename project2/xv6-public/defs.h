@@ -188,3 +188,11 @@ void            clearpteu(pde_t *pgdir, char *uva);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
+
+int plist(void);
+int exec2(char*, char**, int);
+int setmemorylimit(int, int);
+int thread_create(thread_t*, void* (*)(void*), void*);
+void thread_exit(void*);
+int thread_join(thread_t, void**);
+int thread_exit_exec(int, thread_t);

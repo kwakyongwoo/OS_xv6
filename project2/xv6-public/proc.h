@@ -34,6 +34,15 @@ struct context {
 
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+// struct thread {
+//   char *kstack;
+//   enum procstate state;
+//   thread_t tid;
+//   struct trapframe *tf;
+//   struct context *context;
+//   void *chan;
+// };
+
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
@@ -49,6 +58,20 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  int stacksize;
+  int limit;
+
+  struct proc *mainp;
+  thread_t tid;
+  thread_t nexttid;
+
+  void *retval;
+
+  uint empty[NPROC + 1];
+	int start;
+  int end;
+	uint address;
 };
 
 // Process memory is laid out contiguously, low addresses first:

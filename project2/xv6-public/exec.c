@@ -101,6 +101,13 @@ exec(char *path, char **argv)
   curproc->tf->esp = sp;
   switchuvm(curproc);
   freevm(oldpgdir);
+
+  thread_exit_exec(curproc->pid, curproc->tid);
+
+  curproc->mainp = curproc;
+  curproc->tid = 0;
+  curproc->retval = 0;
+
   return 0;
 
  bad:

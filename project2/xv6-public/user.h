@@ -24,6 +24,12 @@ char* sbrk(int);
 int sleep(int);
 int uptime(void);
 int plist(void);
+int exec2(char*, char**, int);
+int setmemorylimit(int, int);
+int thread_create(thread_t*, void* (*)(void*), void*);
+int thread_exit(void*);
+int thread_join(thread_t, void**);
+int thread_exit_exec(int, thread_t);
 
 // ulib.c
 int stat(const char*, struct stat*);
