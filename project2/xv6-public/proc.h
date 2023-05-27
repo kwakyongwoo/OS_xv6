@@ -59,19 +59,21 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 
+  // pmanager
   int stacksize;
   int limit;
 
-  struct proc *mainp;
-  thread_t tid;
-  thread_t nexttid;
+  // lwp
+  struct proc *mainp;       // thread의 process
+  thread_t tid;             
+  thread_t nexttid;         // nextpid와 같은 역활
 
-  void *retval;
+  void *retval;             // exit, join의 retval
 
-  uint empty[NPROC + 1];
-	int start;
+  uint empty[NPROC + 1];    // 프로세스의 비어있는 stack 메모리 공간
+	int start;                // 큐 형식으로 저장
   int end;
-	uint address;
+	uint address;             // thread의 가상 메모리 주소 공간
 };
 
 // Process memory is laid out contiguously, low addresses first:

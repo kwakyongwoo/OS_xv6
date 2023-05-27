@@ -32,9 +32,11 @@ int main(int argc, char *argv[]) {
 loop:
     memset(buf, 0, sizeof(buf));
     while (getcmd(buf, sizeof(buf)) >= 0) {
-        printf(1, "input: %s\n", buf);
-        if (buf[0] == 'l' && buf[1] == 'i' && buf[2] == 's' && buf[3] == 't' && buf[4] == '\n')
+
+        if (buf[0] == 'l' && buf[1] == 'i' && buf[2] == 's' && buf[3] == 't' && buf[4] == '\n') {
             plist();
+            printf(1, "\n");
+        }
 
         else if (buf[0] == 'k' && buf[1] == 'i' && buf[2] == 'l' && buf[3] == 'l' && buf[4] == ' ') {
             int i = 5;

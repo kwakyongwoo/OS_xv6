@@ -188,8 +188,8 @@ growproc(int n)
   // process & thread sz 모두 늘려주기(sbrk)
 	acquire(&ptable.lock);
 
-	for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-		if(p->pid == curproc->pid)
+	for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+		if (p->pid == curproc->pid)
 			p->sz = sz;
 	}
 
@@ -276,7 +276,7 @@ exit(void)
 
   acquire(&ptable.lock);
 
-  // thread 
+  // thread 모두 정리
   for (t = ptable.proc; t < &ptable.proc[NPROC]; t++) {
     if (t->pid == curproc->pid && t != curproc) {
       kfree(t->kstack);
@@ -602,7 +602,7 @@ intlen(int x)
     return 1;
 }
 
-int 
+void
 plist(void) 
 {
   struct proc *p;
@@ -647,8 +647,6 @@ plist(void)
   }
 
   release(&ptable.lock);
-
-  return 0;
 }
 
 int
@@ -662,6 +660,10 @@ exec2(char *path, char **argv, int stacksize)
   struct proghdr ph;
   pde_t *pgdir, *oldpgdir;
   struct proc *curproc = myproc();
+
+  // stacksize는 1 이상 100 이하의 정수여야 합니다.
+  if (stacksize < 1 || stacksize > 100)
+    return -1;
 
   acquire(&ptable.lock);
   curproc->stacksize = stacksize;
@@ -773,18 +775,22 @@ setmemorylimit(int pid, int limit)
 
   acquire(&ptable.lock);
 
+  //  limit이 음수인 경우 등에도 -1을 반환합니다.
+  if (limit < 0)
+    return -1;
+
   for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
     if (p->pid == pid) break;
   }
 
+  // pid가 존재하지 않는 경우 -1을 반환합니다.
   if (p->pid != pid) {
-    // pid 존재하지 않음
     release(&ptable.lock);
     return -1;
   }
 
+  // 기존 할당받은 메모리보다 limit가 작은 경우 -1을 반환합니다.
   if (p->sz >= limit && limit != 0) {
-    // limit이 현재 size보다 작음
     release(&ptable.lock);
     return -1;
   }
@@ -885,6 +891,7 @@ bad :
 void
 thread_exit(void *retval)
 {
+  // exit()
 	struct proc *curthread = myproc();
 	int fd;
 
@@ -919,6 +926,7 @@ thread_exit(void *retval)
 int
 thread_join(thread_t thread, void **retval)
 {
+  // wait()
 	struct proc *t;
   int havekids;
   struct proc *curproc = myproc();

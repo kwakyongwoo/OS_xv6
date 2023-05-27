@@ -102,6 +102,7 @@ exec(char *path, char **argv)
   switchuvm(curproc);
   freevm(oldpgdir);
 
+  // exec가 실행되면 기존 프로세스의 모든 스레드들이 정리되어야 합니다.
   thread_exit_exec(curproc->pid, curproc->tid);
 
   curproc->mainp = curproc;

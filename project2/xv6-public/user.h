@@ -23,9 +23,11 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
-int plist(void);
+// pmanager
+void plist(void);
 int exec2(char*, char**, int);
 int setmemorylimit(int, int);
+// lwp
 int thread_create(thread_t*, void* (*)(void*), void*);
 int thread_exit(void*);
 int thread_join(thread_t, void**);
